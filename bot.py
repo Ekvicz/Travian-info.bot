@@ -15,7 +15,7 @@ URL_MAP = 'https://ts1.x1.europe.travian.com/map.sql'
 URL_STATS = 'https://ts1.x1.europe.travian.com/statistiken.sql'
 # =============================================================
 
-app = flask(__name__)
+app = if __name__ == "__main__":
 
 @app.route('/')
 def ping():
