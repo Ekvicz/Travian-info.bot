@@ -13,7 +13,7 @@ REPORT_CHANNEL_ID = 1491485630566498344
 SERVER_URL = 'https://ts1.x1.europe.travian.com/map.sql'
 # =============================================================
 
-app = Flask(_name_)
+app = Flask(__name__)
 
 @app.route('/')
 def home():
@@ -92,7 +92,7 @@ def run_web_server():
     # Server pro Render/Cron-job na portu 8080
     app.run(host='0.0.0.0', port=8080)
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     # Flask bezi v samostatnem vlakne
     t = Thread(target=run_web_server, daemon=True)
     t.start()
