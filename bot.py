@@ -27,27 +27,35 @@ class TravianBot(discord.Client):
         self.first_run = True
 
     async def setup_hook(self):
+        # Spustí smyčku hned po startu
         self.stats_report.start()
 
-    @tasks.loop(minutes=30)  # Zvětšeno na 30 min pro úsporu zdrojů
+    @tasks.loop(minutes=30)
     async def stats_report(self):
         await self.wait_until_ready()
+        print("--- DEBUG: Smyčka stats_report se právě spustila ---")
         
         if self.first_run:
-            print("První start - čekám na stabilitu...")
-            await asyncio.sleep(5)
+            print("--- DEBUG: První start - čekám 10 sekund na stabilizaci sítě ---")
+            await asyncio.sleep(10)
             self.first_run = False
 
         channel = self.get_channel(REPORT_CHANNEL_ID)
+        
+        # Pokud bot kanál nenajde v mezipaměti, zkusí ho načíst přímo z API
         if not channel:
-            print(f"Chyba: Kanál {REPORT_CHANNEL_ID} nenalezen!")
-            return
+            print(f"--- DEBUG: Kanál {REPORT_CHANNEL_ID} nenalezen v cache, zkouším fetch... ---")
+            try:
+                channel = await self.fetch_channel(REPORT_CHANNEL_ID)
+            except Exception as e:
+                print(f"--- CHYBA: Kanál nelze načíst: {e} ---")
+                return
 
         try:
-            print("Zpracovávám data z Travianu (úsporný režim)...")
+            print("--- DEBUG: Začínám stahovat a zpracovávat data z Travianu ---")
             players = {}
 
-            # 1. ČTENÍ MAPY (Streamování pro úsporu RAM)
+            # 1. ČTENÍ MAPY
             with requests.get(URL_MAP, stream=True, timeout=60) as r:
                 for line in r.iter_lines(decode_unicode=True):
                     if line and "INSERT INTO" in line:
@@ -86,7 +94,7 @@ class TravianBot(discord.Client):
                             continue
 
             if not players:
-                print("Žádná data nebyla načtena.")
+                print("--- DEBUG: Seznam hráčů je prázdný, nebylo co zpracovat ---")
                 return
 
             # 3. FILTRACE TOP 10
@@ -94,7 +102,7 @@ class TravianBot(discord.Client):
             top_off = sorted(players.values(), key=lambda x: x['off'], reverse=True)[:10]
             top_deff = sorted(players.values(), key=lambda x: x['deff'], reverse=True)[:10]
 
-            # 4. EMBED
+            # 4. EMBED (Zpráva)
             embed = discord.Embed(title="📊 TOP 10 STATISTIKY SERVERU", color=0x2ecc71)
             embed.description = f"Aktualizováno: <t:{int(time.time())}:R>"
 
@@ -104,24 +112,27 @@ class TravianBot(discord.Client):
             embed.add_field(name="🏰 Populace", value=fmt(top_pop, 'pop'), inline=False)
             embed.add_field(name="⚔️ Off Body", value=fmt(top_off, 'off'), inline=True)
             embed.add_field(name="🛡️ Deff Body", value=fmt(top_deff, 'deff'), inline=True)
-            embed.set_footer(text="Data: ts1.x1.europe.travian.com")
+            embed.set_footer(text="Zdroj dat: Travian SQL Dump")
 
             await channel.send(embed=embed)
-            print("OK: Report odeslán na Discord.")
-            del players # Ruční vyčištění paměti
+            print("--- OK: Zpráva byla úspěšně odeslána na Discord! ---")
+            
+            # Uvolnění paměti
+            del players
 
         except Exception as e:
-            print(f"Chyba při zpracování: {e}")
+            print(f"--- CHYBA při zpracování: {e} ---")
 
 def run_web():
+    # Render porty
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
 if __name__ == "__main__":
-    # Spuštění Flasku ve vedlejším vlákně
+    # Spuštění webu pro Render
     Thread(target=run_web, daemon=True).start()
     
-    # Nastavení bota
+    # Nastavení práv (Intents)
     intents = discord.Intents.default()
     intents.message_content = True
     
@@ -130,4 +141,4 @@ if __name__ == "__main__":
     try:
         client.run(TOKEN)
     except Exception as e:
-        print(f"Bot se odpojil: {e}")
+        print(f"--- BOT SE ODPOJIL: {e} ---")
