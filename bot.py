@@ -107,7 +107,7 @@ def run_web():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     Thread(target=run_web, daemon=True).start()
     intents = discord.Intents.default()
     client = TravianBot(intents=intents)
