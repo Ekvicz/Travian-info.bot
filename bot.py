@@ -3,7 +3,7 @@ import requests
 import os
 import time
 import io
-import asyncio  # Oprava: Import musí být nahoře
+import asyncio
 from flask import Flask
 from threading import Thread
 from discord.ext import tasks
@@ -15,11 +15,10 @@ URL_MAP = 'https://ts1.x1.europe.travian.com/map.sql'
 URL_STATS = 'https://ts1.x1.europe.travian.com/statistiken.sql'
 # =============================================================
 
-app = Flask(__name__)
+app = Flask(__name__) # TADY byla ta chyba - musí tu být __name__
 
 @app.route('/')
 def ping():
-    # Minimální odpověď pro cron-job, aby nehlásil "output too large"
     return "", 200
 
 class TravianBot(discord.Client):
@@ -35,17 +34,17 @@ class TravianBot(discord.Client):
         await self.wait_until_ready()
         
         if self.first_run:
-            print("První start - čekám 5s na stabilitu...")
+            print("Prvni start - cekam na stabilitu...")
             await asyncio.sleep(5)
             self.first_run = False
 
         channel = self.get_channel(REPORT_CHANNEL_ID)
         if not channel:
-            print(f"Chyba: Kanál {REPORT_CHANNEL_ID} nenalezen!")
+            print(f"Chyba: Kanal {REPORT_CHANNEL_ID} nenalezen!")
             return
 
         try:
-            print("Stahuji data z Travianu...")
+            print("Zpracovavam data z Travianu...")
             players = {}
 
             # 1. ČTENÍ MAPY
@@ -53,8 +52,11 @@ class TravianBot(discord.Client):
                 for line in r.iter_lines(decode_unicode=True):
                     if line and "INSERT INTO" in line:
                         try:
-                            parts = line.split("VALUES")[1].strip("(); ").split(",")
-                            uid, name, pop = parts[6].strip("' "), parts[7].strip("' "), int(parts[10].strip("' "))
+                            content = line.split("VALUES")[1].strip("(); ")
+                            parts = content.split(",")
+                            uid = parts[6].strip("' ")
+                            name = parts[7].strip("' ")
+                            pop = int(parts[10].strip("' "))
                             if uid in players: players[uid]['pop'] += pop
                             else: players[uid] = {'name': name, 'pop': pop, 'off': 0, 'deff': 0}
                         except: continue
@@ -67,7 +69,8 @@ class TravianBot(discord.Client):
                     elif "x_world_stats_defend" in line: mode = 2
                     if mode > 0 and "INSERT INTO" in line:
                         try:
-                            parts = line.split("VALUES")[1].strip("(); ").split(",")
+                            content = line.split("VALUES")[1].strip("(); ")
+                            parts = content.split(",")
                             uid, points = parts[0].strip("' "), int(parts[3].strip("' "))
                             if uid in players:
                                 if mode == 1: players[uid]['off'] = points
@@ -85,19 +88,20 @@ class TravianBot(discord.Client):
             embed = discord.Embed(title="📊 TOP 10 STATISTIKY SERVERU", color=0x2ecc71)
             embed.description = f"Aktualizováno: <t:{int(time.time())}:R>"
 
-            def fmt(data, k): return "\n".join([f"{i}. *{p['name']}* ({p[k]})" for i, p in enumerate(data, 1)])
+            def fmt(data, k): 
+                return "\n".join([f"{i}. *{p['name']}* ({p[k]})" for i, p in enumerate(data, 1)])
 
             embed.add_field(name="🏰 Populace", value=fmt(top_pop, 'pop'), inline=False)
             embed.add_field(name="⚔️ Off Body", value=fmt(top_off, 'off'), inline=True)
             embed.add_field(name="🛡️ Deff Body", value=fmt(top_deff, 'deff'), inline=True)
-            embed.set_footer(text="Zdroj: ts1.x1.europe.travian.com")
+            embed.set_footer(text="Data: ts1.x1.europe.travian.com")
 
             await channel.send(embed=embed)
-            print("OK: Statistiky odeslány.")
+            print("OK: Report odeslan na Discord.")
             del players
 
         except Exception as e:
-            print(f"Chyba při reportu: {e}")
+            print(f"Chyba pri zpracovani: {e}")
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -110,4 +114,4 @@ if _name_ == "_main_":
     try:
         client.run(TOKEN)
     except Exception as e:
-        print(f"Bot spadl: {e}")
+        print(f"Bot se odpojil: {e}")
