@@ -9,7 +9,7 @@ from discord.ext import tasks
 from flask import Flask
 from threading import Thread
 
-# --- 1. PROVOZ PRO RENDER ---
+# --- 1. PROVOZ PRO RENDER (Keep-alive) ---
 app = Flask(__name__)
 @app.route('/')
 def home(): return "Bot is online!", 200
@@ -35,10 +35,11 @@ class TravianBot(discord.Client):
     @tasks.loop(minutes=20)
     async def stats_loop(self):
         print("🚀 Startuji aktualizaci dat...")
-        players = {}
+        players = {} # Inicializace databáze hráčů
         try:
             await self.wait_until_ready()
-            # Pokus o ziskani kanalu
+            
+            # Hledání kanálu (ID nebo Jméno)
             channel = self.get_channel(REPORT_CHANNEL_ID)
             if not channel:
                 channel = discord.utils.get(self.get_all_channels(), name=CHANNEL_NAME)
@@ -47,12 +48,11 @@ class TravianBot(discord.Client):
                 print("❌ Kanal nenalezen!")
                 return
 
-            # 📥 1. STAHUJI MAPU (Populace)
+            # --- 📥 1. STAHUJI MAPU (Populace) ---
             print("📥 Stahuji mapu...")
             r_map = requests.get(URL_MAP, stream=True, timeout=60)
             for line in r_map.iter_lines():
                 if line:
-                    # TADY JE TA OPRAVA: Prevod bytes na str
                     line_str = line.decode('utf-8', errors='ignore')
                     if "INSERT INTO" in line_str and "VALUES" in line_str:
                         try:
@@ -65,61 +65,72 @@ class TravianBot(discord.Client):
 
             await asyncio.sleep(1)
 
-            # 📥 2. STAHUJI STATISTIKY (Utok/Obrana)
+            # --- 📥 2. STAHUJI STATISTIKY (Utok/Obrana) ---
             print("📥 Stahuji statistiky...")
             r_stats = requests.get(URL_STATS, stream=True, timeout=60)
-            mode = 0
+            mode = 0 # 1 = Off, 2 = Deff
             for line in r_stats.iter_lines():
                 if line:
                     line_str = line.decode('utf-8', errors='ignore')
                     if "x_world_stats_attack" in line_str: mode = 1
                     elif "x_world_stats_defend" in line_str: mode = 2
                     
-                    if mode > 0 and "INSERT INTO" in line_str:
+                    if mode > 0 and "INSERT INTO" in line_str and "VALUES" in line_str:
                         try:
                             content = line_str.split("VALUES")[1].strip("(); ")
                             p = [x.strip("'\" ") for x in content.split(",")]
-                            uid, pts = p[0], int(p[3])
+                            uid = p[0] # UID hráče
+                            pts = int(p[3]) # Body
+                            
                             if uid in players:
-                                if mode == 1: players[uid][2] = pts
-                                if mode == 2: players[uid][3] = pts
+                                if mode == 1: players[uid][2] = pts # Off body
+                                if mode == 2: players[uid][3] = pts # Deff body
                         except: continue
 
             if not players:
-                print("⚠️ Zadna data.")
+                print("⚠️ Zadna data k odeslani.")
                 return
 
-            # 📊 3. POSILANI NA DISCORD
+            # --- 📊 3. POSILANI NA DISCORD ---
             print("📊 Generuji TOP 10...")
             top_pop = sorted(players.values(), key=lambda x: x[1], reverse=True)[:10]
             top_off = sorted(players.values(), key=lambda x: x[2], reverse=True)[:10]
             top_def = sorted(players.values(), key=lambda x: x[3], reverse=True)[:10]
 
-            embed = discord.Embed(title="📊 TOP 10 STATISTIKY SERVERU", color=0x2ecc71)
-            embed.description = f"Aktualizováno: <t:{int(time.time())}:R>"
+            embed = discord.Embed(
+                title="🏰 ELITNÍ STATISTIKY SERVERU", 
+                color=0x2ecc71,
+                description=f"Aktualizováno: <t:{int(time.time())}:R>"
+            )
             
             def fmt(data, idx):
-                res = "\n".join(f"{i+1}. {p[0]} ({p[idx]})" for i, p in enumerate(data))
-                return res if res else "Zadna data"
+                res = "\n".join(f"{i+1}. *{p[0]}* — {p[idx]}" for i, p in enumerate(data))
+                return res if res else "Zatím žádná data"
 
-            embed.add_field(name="🏰 Populace", value=fmt(top_pop, 1), inline=False)
-            embed.add_field(name="⚔️ Off Body", value=fmt(top_off, 2), inline=True)
-            embed.add_field(name="🛡️ Deff Body", value=fmt(top_def, 3), inline=True)
+            embed.add_field(name="🏙️ Populace", value=fmt(top_pop, 1), inline=False)
+            embed.add_field(name="⚔️ Útočné body (Off)", value=fmt(top_off, 2), inline=True)
+            embed.add_field(name="🛡️ Obranné body (Deff)", value=fmt(top_def, 3), inline=True)
+            
+            embed.set_footer(text="Travian Automated Intel", icon_url=self.user.avatar.url if self.user.avatar else None)
 
             await channel.send(embed=embed)
-            print("✨ OK: Zprava odeslana!")
+            print("✨ OK: Zprava uspesne odeslana!")
 
         except Exception as e:
-            print(f"🔥 CHYBA: {e}")
+            print(f"🔥 CHYBA V SYSTÉMU: {e}")
             traceback.print_exc()
         finally:
             players.clear()
-            gc.collect()
+            gc.collect() # Uvolnění paměti
 
 # --- 4. SPUSTENI ---
 if __name__ == "__main__":
+    # Web server pro Render
     Thread(target=run_flask, daemon=True).start()
+    
+    # Nastavení práv bota
     intents = discord.Intents.default()
     intents.guilds = True
+    
     client = TravianBot(intents=intents)
     client.run(TOKEN)
