@@ -107,7 +107,7 @@ class TravianBot(discord.Client):
             embed.description = f"Aktualizováno: <t:{int(time.time())}:R>"
 
             def fmt(data, k):
-                return "\n".join([f"{i}. *{p['name']}* ({p[k]})" for i, p in enumerate(data, 1)])
+                return "\n".join([f"{i}. {p['name']} ({p[k]})" for i, p in enumerate(data, 1)])
 
             embed.add_field(name="🏰 Populace", value=fmt(top_pop, 'pop'), inline=False)
             embed.add_field(name="⚔️ Off Body", value=fmt(top_off, 'off'), inline=True)
