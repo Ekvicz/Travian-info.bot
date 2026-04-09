@@ -23,7 +23,6 @@ REPORT_CHANNEL_ID = 1191485630566498344
 URL_MAP = 'https://ts1.x1.europe.travian.com/map.sql'
 URL_STATS = 'https://ts1.x1.europe.travian.com/statistiken.sql'
 
-# --- 3. BOT ---
 class TravianBot(discord.Client):
     async def on_ready(self):
         print(f'✅ Bot online: {self.user}')
@@ -32,54 +31,63 @@ class TravianBot(discord.Client):
 
     @tasks.loop(minutes=20)
     async def stats_loop(self):
-        print("🚀 Spouštím hloubkovou analýzu dat (včetně PvE)...")
-        # Struktura: [Jméno, Populace, Off, Deff, PvE]
+        print("🚀 Spouštím analýzu dat...")
         players = {} 
         
         try:
             await self.wait_until_ready()
             channel = self.get_channel(REPORT_CHANNEL_ID)
-            if not channel: return
+            if not channel:
+                print(f"❌ Kanál {REPORT_CHANNEL_ID} nenalezen!")
+                return
 
-            # --- A. POPULACE ---
-            r_map = requests.get(URL_MAP, timeout=60)
+            # --- A. POPULACE (MAP.SQL) ---
+            r_map = requests.get(URL_MAP, timeout=60, stream=True)
             for line in r_map.iter_lines():
+                if not line: continue
                 l = line.decode('utf-8', errors='ignore')
                 if "INSERT INTO" in l:
                     try:
                         p = [x.strip("'\" ") for x in l.split("VALUES")[1].strip("(); ").split(",")]
+                        # uid=index 6, name=7, pop=10
                         uid, name, pop = p[6], p[7], int(p[10])
-                        if uid in players: players[uid][1] += pop
-                        else: players[uid] = [name, pop, 0, 0, 0]
+                        if uid in players:
+                            players[uid][1] += pop
+                        else:
+                            players[uid] = [name, pop, 0, 0, 0]
                     except: continue
 
-            # --- B. STATISTIKY (PvP i PvE) ---
-            r_stats = requests.get(URL_STATS, timeout=60)
-            mode = 0 # 1=Off, 2=Deff, 3=PvE (Hero/Experience)
+            # --- B. STATISTIKY (STATISTIKEN.SQL) ---
+            r_stats = requests.get(URL_STATS, timeout=60, stream=True)
+            mode = 0 
             for line in r_stats.iter_lines():
+                if not line: continue
                 l = line.decode('utf-8', errors='ignore')
                 
-                # Detekce sekcí v SQL souboru
                 if "x_world_stats_attack" in l: mode = 1
                 elif "x_world_stats_defend" in l: mode = 2
                 elif "x_world_stats_hero" in l or "x_world_stats_experience" in l: mode = 3
                 
                 if mode > 0 and "INSERT INTO" in l:
                     try:
-                        p = [x.strip("'\" ") for x in l.split("VALUES")[1].strip("(); ").split(",")]
+                        content = l.split("VALUES")[1].strip("(); ")
+                        p = [x.strip("'\" ") for x in content.split(",")]
                         uid = p[0]
-                        # Zkusíme vytáhnout body (index 3 nebo 2)
-                        pts = int(p[3]) if len(p) > 3 and int(p[3]) > 0 else int(p[2])
+                        # Body jsou obvykle na indexu 3, u hrdinů to může být index 2 nebo 3 (zkušenosti)
+                        pts = int(p[3]) if len(p) > 3 else int(p[2])
                         
                         if uid in players:
-                            if mode == 1: players[uid][2] = pts # PvP Off
-                            if mode == 2: players[uid][3] = pts # PvP Deff
-                            if mode == 3: players[uid][4] = pts # PvE / Hero Exp
+                            if mode == 1: players[uid][2] = pts
+                            elif mode == 2: players[uid][3] = pts
+                            elif mode == 3: players[uid][4] = pts
                     except: continue
 
-            if not players: return
+            if not players:
+                print("⚠️ Žádná data nebyla načtena.")
+                return
 
             # --- C. VÝBĚR TOP 10 ---
+            # Filtrujeme pouze ty, co mají v dané kategorii víc než 0, aby žebříček nebyl prázdný
             t_pop = sorted(players.values(), key=lambda x: x[1], reverse=True)[:10]
             t_off = sorted(players.values(), key=lambda x: x[2], reverse=True)[:10]
             t_def = sorted(players.values(), key=lambda x: x[3], reverse=True)[:10]
@@ -88,17 +96,19 @@ class TravianBot(discord.Client):
             embed = discord.Embed(title="🏰 KOMPLETNÍ STATISTIKY SERVERU", color=0x3498db)
             embed.description = f"Aktualizováno: <t:{int(time.time())}:R>"
             
-            def f(d, i): return "\n".join(f"{idx+1}. *{p[0]}* — {p[i]}" for idx, p in enumerate(d))
+            def f(d, i):
+                res = "\n".join(f"{idx+1}. *{p[0]}* — {p[i]}" for idx, p in enumerate(d) if p[i] > 0)
+                return res if res else "Žádná data"
             
             embed.add_field(name="🏙️ Populace", value=f(t_pop, 1), inline=False)
             embed.add_field(name="⚔️ PvP Útok (Off)", value=f(t_off, 2), inline=True)
             embed.add_field(name="🛡️ PvP Obrana (Deff)", value=f(t_def, 3), inline=True)
-            embed.add_field(name="🦁 PvE (Hrdina/Oázy)", value=f(t_pve, 4), inline=False)
+            embed.add_field(name="🦁 PvE (Hrdina/Zkušenosti)", value=f(t_pve, 4), inline=False)
             
-            embed.set_footer(text="Travian Automated Intelligence • PvE Enabled")
+            embed.set_footer(text="Travian Automated Intelligence • PvE Mode")
             
             await channel.send(embed=embed)
-            print("✨ Statistiky (včetně PvE) úspěšně odeslány!")
+            print("✨ Statistiky úspěšně odeslány!")
 
         except Exception as e:
             print(f"🔥 Chyba: {e}")
@@ -111,4 +121,6 @@ if __name__ == "__main__":
     Thread(target=run_flask, daemon=True).start()
     intents = discord.Intents.default()
     intents.guilds = True
-    TravianBot(intents=intents).run(TOKEN)
+    # Přidáno kvůli stabilitě na Renderu
+    client = TravianBot(intents=intents)
+    client.run(TOKEN)
