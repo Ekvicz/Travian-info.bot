@@ -8,38 +8,39 @@ from discord.ext import tasks
 from flask import Flask
 from threading import Thread
 
-# --- KONFIGURACE ---
+# --- 1. MINIMÁLNÍ WEBSERVER PRO RENDER ---
+app = Flask(__name__)
+
+@app.route('/')
+def ping():
+    return "Bot is alive!", 200
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    # Důležité: debug=False a use_reloader=False, aby to nebilo s Discordem
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+
+# --- 2. KONFIGURACE ---
 TOKEN = os.environ.get('DISCORD_TOKEN')
 REPORT_CHANNEL_ID = 1491485630566498344
 URL_MAP = 'https://ts1.x1.europe.travian.com/map.sql'
 URL_STATS = 'https://ts1.x1.europe.travian.com/statistiken.sql'
 
-# --- FLASK (Záchrana pro Render) ---
-app = Flask(__name__)
-
-@app.route('/')
-def health_check():
-    return "Bot is running", 200
-
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
-
-# --- BOT LOGIKA ---
+# --- 3. BOT LOGIKA ---
 class TravianBot(discord.Client):
     async def on_ready(self):
-        print(f"--- BOT ONLINE: {self.user} ---")
+        print(f"--- BOT PŘIHLÁŠEN: {self.user} ---")
         if not self.stats_loop.is_running():
             self.stats_loop.start()
 
-    @tasks.loop(minutes=30)
+    @tasks.loop(minutes=20) # Zvýšeno na 20 min, ať má Render čas dýchat
     async def stats_loop(self):
-        print("--- Start smyčky: Stahuji data ---")
+        print("--- DEBUG: Začínám zpracování dat ---")
         try:
             channel = await self.fetch_channel(REPORT_CHANNEL_ID)
             players = {}
 
-            # Stahování MAPY
+            # Stahování Mapy
             with requests.get(URL_MAP, stream=True, timeout=60) as r:
                 for line in r.iter_lines(decode_unicode=True):
                     if line and "INSERT INTO" in line:
@@ -50,7 +51,7 @@ class TravianBot(discord.Client):
                             else: players[uid] = [name, pop, 0, 0]
                         except: continue
 
-            # Stahování STATISTIK
+            # Stahování Statistik
             with requests.get(URL_STATS, stream=True, timeout=60) as r:
                 mode = 0
                 for line in r.iter_lines(decode_unicode=True):
@@ -65,12 +66,13 @@ class TravianBot(discord.Client):
                                 else: players[uid][3] = pts
                         except: continue
 
-            # Formátování a odeslání
+            # Výběr TOP 10
             top_pop = sorted(players.values(), key=lambda x: x[1], reverse=True)[:10]
             top_off = sorted(players.values(), key=lambda x: x[2], reverse=True)[:10]
             top_def = sorted(players.values(), key=lambda x: x[3], reverse=True)[:10]
 
-            def fmt(data, idx): return "\n".join(f"{i+1}. {p[0]} ({p[idx]})" for i, p in enumerate(data))
+            def fmt(data, idx): 
+                return "\n".join(f"*{i+1}.* {p[0]} ({p[idx]})" for i, p in enumerate(data))
 
             embed = discord.Embed(title="📊 TOP 10 STATISTIKY SERVERU", color=0x2ecc71)
             embed.description = f"Aktualizováno: <t:{int(time.time())}:R>"
@@ -79,22 +81,25 @@ class TravianBot(discord.Client):
             embed.add_field(name="🛡️ Deff Body", value=fmt(top_def, 3), inline=True)
 
             await channel.send(embed=embed)
-            print("--- OK: Zpráva odeslána ---")
+            print("--- OK: Zpráva odeslána na Discord ---")
             
-            # Úklid paměti
+            # Kritické pro Render Free Tier (uvolnění RAM)
             players.clear()
             gc.collect()
 
         except Exception as e:
-            print(f"--- CHYBA: {e} ---")
+            print(f"--- CHYBA VE SMYČCE: {e} ---")
 
-# --- SPUŠTĚNÍ ---
+# --- 4. SPUŠTĚNÍ VŠEHO ---
 if __name__ == "__main__":
-    # Start webu na pozadí
-    Thread(target=run_flask, daemon=True).start()
+    # Spustíme Flask v jiném vlákně
+    flask_thread = Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
 
-    # Start Discord bota
+    # Spustíme Discord bota
     intents = discord.Intents.default()
     intents.message_content = True
+    
     client = TravianBot(intents=intents)
     client.run(TOKEN)
